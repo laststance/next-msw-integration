@@ -138,22 +138,20 @@ next-msw-integration/
 │   ├── app/
 │   │   ├── layout.tsx                 # Root layout (server-side MSW integration)
 │   │   ├── msw-provider.tsx           # MSWProvider (client-side MSW integration)
-│   │   ├── page.tsx                   # Home page
-│   │   ├── test-msw/
-│   │   │   └── page.tsx               # MSW verification page
+│   │   ├── page.tsx                   # Home page (MSW demo with user data)
 │   │   └── globals.css                # Global styles
 │   ├── env.ts                         # Environment variable schema (Zod)
 │   └── utils/
 │       ├── isMSWEnabled.ts            # MSW activation logic
 │       └── isMSWEnabled.test.ts       # Unit tests
 ├── mocks/
-│   ├── handlers.ts                    # MSW handlers (shared)
+│   ├── handlers.ts                    # MSW handlers (shared, comprehensive docs)
 │   ├── browser.ts                     # Browser worker setup
 │   └── server.ts                      # Server worker setup
 ├── public/
 │   └── mockServiceWorker.js           # MSW worker file (auto-generated)
 ├── e2e/
-│   └── msw-integration.spec.ts        # Playwright tests
+│   └── homepage.spec.ts               # Playwright E2E tests (4 scenarios)
 ├── playwright.config.ts               # Playwright configuration
 ├── tsconfig.json                      # TypeScript configuration
 ├── tailwind.config.ts                 # Tailwind configuration
@@ -166,6 +164,8 @@ next-msw-integration/
 ├── CLAUDE.md                          # Claude Code guidance
 └── package.json                       # Project configuration & scripts
 ```
+
+> **Note:** All components include comprehensive JSDoc documentation explaining implementation rationale and React StrictMode considerations.
 
 ---
 
@@ -300,7 +300,14 @@ pnpm test:e2e:ui
 pnpm test:e2e:debug
 ```
 
-**File:** `e2e/msw-integration.spec.ts`
+**File:** `e2e/homepage.spec.ts`
+
+**Test Coverage (4 scenarios across Chrome, Firefox, Safari):**
+
+1. **Mocked Data Display** — Verifies MSW returns and displays user data (John Doe)
+2. **API Interception** — Confirms `/api/user` requests are intercepted with 200 OK
+3. **Error State Handling** — Ensures no error messages appear during normal operation
+4. **Loading Transitions** — Validates proper state transitions from loading to data display
 
 Playwright's `webServer` option automatically builds and starts Next.js.
 
@@ -308,6 +315,7 @@ Playwright's `webServer` option automatically builds and starts Next.js.
 
 - `fullyParallel: false` — Avoid MSW conflicts
 - Environment variables: `NODE_ENV=test`, `NEXT_PUBLIC_ENABLE_MSW_MOCK=true`, `APP_ENV=test`
+- Tests run across all major browsers (Chromium, Firefox, WebKit)
 
 ---
 
@@ -372,21 +380,24 @@ export function ProductFetcher() {
 NEXT_PUBLIC_ENABLE_MSW_MOCK=true pnpm dev
 ```
 
-Check browser console for:
+Navigate to http://localhost:3000 and check:
 
-```
-[MSW] Mocking enabled
-```
+1. **Browser Console:**
 
-### Test Page Verification
+   ```
+   [MSW] Mocking enabled
+   ```
 
-Navigate to:
+2. **Page Content:**
+   - "MSW Test Page" heading should appear
+   - User data should display:
+     - **ID:** 1
+     - **Name:** John Doe
+     - **Email:** john.doe@example.com
 
-```
-http://localhost:3000/test-msw
-```
-
-Mocked API responses should be displayed.
+3. **Network Tab:**
+   - `/api/user` request should show a 200 OK response
+   - Response should contain the mocked user data
 
 ### Server-side Verification
 
@@ -397,7 +408,7 @@ pnpm build:e2e
 pnpm start
 ```
 
-SSR pages will use mocked APIs.
+SSR pages will use mocked APIs. The home page will display the same mocked data as client-side.
 
 ---
 
@@ -414,6 +425,57 @@ const { worker } = await import('../mocks/browser')
 ```
 
 `mocks/browser.ts` uses browser-specific APIs. Dynamic import prevents bundling on the server.
+
+### React StrictMode & State Management
+
+React StrictMode (enabled by default in Next.js) **intentionally double-renders** components in development to catch side effects. This can cause issues with MSW and async operations.
+
+**Solution: isMounted Pattern**
+
+```typescript
+useEffect(() => {
+  let isMounted = true
+
+  const fetchData = async () => {
+    const data = await fetch('/api/user')
+    // Only update state if component is still mounted
+    if (isMounted) {
+      setUser(data)
+    }
+  }
+
+  fetchData()
+
+  // Cleanup: prevent state updates after unmount
+  return () => {
+    isMounted = false
+  }
+}, [])
+```
+
+This pattern prevents:
+
+- Memory leaks from state updates on unmounted components
+- React warnings about state updates after unmount
+- Race conditions from StrictMode's double rendering
+
+### MSW Initialization Sequencing
+
+The `MSWProvider` uses `useState` to track MSW readiness:
+
+```typescript
+const [isMSWReady, setIsMSWReady] = useState(false)
+
+// Show loading UI until MSW is ready
+if (isMSWEnabled() && !isMSWReady) {
+  return <div>Initializing MSW...</div>
+}
+
+// Render children only after MSW is initialized
+return <>{children}</>
+```
+
+This prevents components from fetching data before MSW intercepts are registered.
 
 ### MSW Worker File
 
@@ -443,6 +505,141 @@ const config: PlaywrightTestConfig = {
 
 ---
 
+## 🐛 Troubleshooting
+
+### Issue: "Loading..." displays indefinitely
+
+**Symptoms:**
+
+- Page shows "Loading..." or "Initializing MSW..." forever
+- Mocked data never appears
+- Console shows MSW initialized successfully
+
+**Root Cause:**
+React StrictMode double-renders components in development, causing race conditions in state updates.
+
+**Solution:**
+Implement the `isMounted` pattern in your data-fetching components:
+
+```typescript
+useEffect(() => {
+  let isMounted = true
+
+  const fetchData = async () => {
+    try {
+      const res = await fetch('/api/endpoint')
+      const data = await res.json()
+      if (isMounted) {
+        // ← Check before state update
+        setData(data)
+      }
+    } finally {
+      if (isMounted) {
+        // ← Check before state update
+        setLoading(false)
+      }
+    }
+  }
+
+  fetchData()
+
+  return () => {
+    isMounted = false // ← Cleanup
+  }
+}, [])
+```
+
+### Issue: Hydration mismatch errors
+
+**Symptoms:**
+
+```
+Hydration failed because the server rendered HTML didn't match the client
+```
+
+**Root Cause:**
+Client and server have different MSW activation logic (`isMSWEnabled()` returns different values).
+
+**Solution:**
+Ensure your environment variables are consistent:
+
+- Client: Only checks `NEXT_PUBLIC_ENABLE_MSW_MOCK`
+- Server: Checks both `NEXT_PUBLIC_ENABLE_MSW_MOCK` AND `APP_ENV=test`
+
+### Issue: MSW not intercepting requests
+
+**Symptoms:**
+
+- Requests go to real endpoints instead of MSW
+- 404 errors for `/api/*` routes
+- Console shows no MSW messages
+
+**Checklist:**
+
+1. ✅ MSW enabled: `NEXT_PUBLIC_ENABLE_MSW_MOCK=true`
+2. ✅ Worker file exists: `public/mockServiceWorker.js`
+3. ✅ Handler registered: Check `mocks/handlers.ts`
+4. ✅ MSW initialized: Check console for "[MSW] Mocking enabled"
+
+**Quick Fix:**
+
+```bash
+# Regenerate MSW worker file
+npx msw init public/ --save
+```
+
+### Issue: E2E tests fail intermittently
+
+**Symptoms:**
+
+- Tests pass locally but fail in CI
+- Timeout errors waiting for elements
+- Network request timing issues
+
+**Solutions:**
+
+1. **Increase timeout for flaky operations:**
+
+```typescript
+await expect(page.getByText('Data')).toBeVisible({ timeout: 10000 })
+```
+
+2. **Ensure production build is fresh:**
+
+```bash
+pnpm build:e2e  # Always rebuild before testing
+```
+
+3. **Check parallel execution:**
+
+```typescript
+// playwright.config.ts
+export default {
+  fullyParallel: false, // Required for MSW
+  workers: process.env.CI ? 1 : undefined,
+}
+```
+
+### Issue: Port already in use
+
+**Symptoms:**
+
+```
+Error: Port 3000 is already in use
+```
+
+**Solution:**
+
+```bash
+# Kill the process using port 3000
+npx kill-port 3000
+
+# Or use a different port
+PORT=3001 pnpm dev
+```
+
+---
+
 ## 📚 References
 
 - **[MSW Official Documentation](https://mswjs.io/docs)**
@@ -455,10 +652,14 @@ const config: PlaywrightTestConfig = {
 
 ## 💡 Tips
 
-- **Disable MSW in local development** for better performance
-- **Enable MSW in test environments** for reliability
-- **Check `isMSWEnabled()`** to prevent hydration mismatches
-- **Use Playwright `--ui` mode** for interactive test development
+- **Disable MSW in local development** for better performance (connect to real APIs)
+- **Enable MSW in test environments** for reliable, isolated testing
+- **Use the `isMounted` pattern** in all components with async data fetching to prevent StrictMode issues
+- **Always wait for MSW initialization** before rendering components that make API calls
+- **Check `isMSWEnabled()`** to prevent hydration mismatches between client and server
+- **Use Playwright `--ui` mode** (`pnpm test:e2e:ui`) for interactive test development
+- **Read JSDoc comments** in the codebase for implementation rationale and best practices
+- **Run `pnpm build:e2e` before E2E tests** to ensure production build includes MSW
 
 ---
 
