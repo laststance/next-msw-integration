@@ -26,11 +26,15 @@ import { env } from '@/env'
  */
 export function isMSWEnabled(): boolean {
   // Client-side: only check NEXT_PUBLIC_ENABLE_MSW_MOCK
+  // This simpler check prevents hydration mismatches between server and client
+  // The client can't access server-only env vars like APP_ENV
   if (typeof window !== 'undefined') {
     return env.NEXT_PUBLIC_ENABLE_MSW_MOCK === 'true'
   }
 
-  // Server-side: check both variables
+  // Server-side: require both NEXT_PUBLIC_ENABLE_MSW_MOCK and test environment
+  // This dual check ensures MSW doesn't accidentally run in production
+  // Even if NEXT_PUBLIC_ENABLE_MSW_MOCK is set, it won't activate unless in test mode
   return (
     env.NEXT_PUBLIC_ENABLE_MSW_MOCK === 'true' &&
     (env.APP_ENV === 'test' || process.env.NODE_ENV === 'test')
