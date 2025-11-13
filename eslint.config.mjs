@@ -22,6 +22,7 @@ export default defineConfig([
       '**/tests-examples/**',
       './playwright-report/**',
       './test-results/**',
+      './coverage/**',
       './e2e/tablet/**',
       './e2e/tablet-landscape/**',
       '.storybook/**',

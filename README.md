@@ -31,7 +31,8 @@ This project implements the pattern from [mswjs/examples PR #101](https://github
 | **API Mocking**    | MSW 2.12                 |
 | **Language**       | TypeScript 5.9           |
 | **Styling**        | Tailwind CSS 4           |
-| **Testing**        | Playwright 1.56          |
+| **Unit Testing**   | Vitest 4.0               |
+| **E2E Testing**    | Playwright 1.56          |
 | **Env Validation** | Zod + @t3-oss/env-nextjs |
 | **Code Quality**   | ESLint 9 + Prettier 3    |
 | **Git Hooks**      | Husky + lint-staged      |
@@ -112,6 +113,9 @@ pnpm test:unit:watch
 # Run unit tests with coverage
 pnpm test:unit:coverage
 
+# Run unit tests in UI mode
+pnpm test:unit:ui
+
 # Run E2E tests
 pnpm test:e2e
 
@@ -157,7 +161,7 @@ next-msw-integration/
 ├── tailwind.config.ts                 # Tailwind configuration
 ├── postcss.config.mjs                 # PostCSS configuration
 ├── eslint.config.mjs                  # ESLint configuration
-├── jest.config.ts                     # Jest configuration
+├── vitest.config.ts                   # Vitest configuration
 ├── .env.example                       # Environment variables template
 ├── .prettierrc                        # Prettier configuration
 ├── .husky/                            # Git hooks
@@ -272,7 +276,9 @@ export function isMSWEnabled(): boolean {
 
 ## 🧪 Testing
 
-### Unit Tests
+### Unit Tests (Vitest)
+
+**Framework:** Vitest 4.0 - Fast, modern test runner with native ESM support
 
 ```bash
 # Run tests
@@ -281,11 +287,87 @@ pnpm test
 # Watch mode
 pnpm test:unit:watch
 
+# UI mode (interactive browser-based testing)
+pnpm test:unit:ui
+
 # Generate coverage
 pnpm test:unit:coverage
 ```
 
-**Example:** `src/utils/isMSWEnabled.test.ts`
+**Configuration:** `vitest.config.ts`
+
+```typescript
+import { defineConfig } from 'vitest/config'
+import path from 'path'
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    setupFiles: ['./vitest.setup.ts'],
+    include: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
+    exclude: ['**/node_modules/**', '**/.next/**', '**/e2e/**'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html', 'text-summary'],
+    },
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+})
+```
+
+**Example Test:** `src/utils/isMSWEnabled.test.ts`
+
+```typescript
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+describe('isMSWEnabled', () => {
+  let isMSWEnabled: () => boolean
+  const originalEnv = process.env
+
+  beforeEach(async () => {
+    vi.resetModules()
+
+    // Mock env module with getters for dynamic access
+    vi.doMock('@/env', () => ({
+      env: {
+        get NEXT_PUBLIC_ENABLE_MSW_MOCK() {
+          return process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK as 'true' | 'false'
+        },
+        get APP_ENV() {
+          return process.env.APP_ENV as 'test' | 'development'
+        },
+      },
+    }))
+
+    const module = await import('./isMSWEnabled')
+    isMSWEnabled = module.isMSWEnabled
+  })
+
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    vi.unmock('@/env')
+  })
+
+  it('returns true when both vars set (server-side)', () => {
+    process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK = 'true'
+    process.env.APP_ENV = 'test'
+    expect(isMSWEnabled()).toBe(true)
+  })
+})
+```
+
+**Key Features:**
+
+- ⚡ **10-15x faster** than Jest
+- 🔄 **Native ESM** support without transpilation
+- 🎨 **Interactive UI mode** for visual test exploration
+- 📊 **Built-in coverage** with v8 provider
+- 🔥 **Hot reload** for instant feedback
 
 ### E2E Tests with Playwright
 
@@ -636,6 +718,64 @@ npx kill-port 3000
 
 # Or use a different port
 PORT=3001 pnpm dev
+```
+
+### Issue: Vitest import errors
+
+**Symptoms:**
+
+```
+Cannot find module 'vitest' or its corresponding type declarations
+Error: Module vitest not found
+```
+
+**Root Cause:**
+Vitest dependencies not installed or outdated configuration files present.
+
+**Solution:**
+
+```bash
+# Ensure Vitest dependencies are installed
+pnpm add -D vitest @vitest/ui @vitest/coverage-v8
+
+# Remove old Jest configuration if present
+rm jest.config.js jest.setup.js
+
+# Verify vitest.config.ts exists
+ls vitest.config.ts
+```
+
+### Issue: Tests run in Playwright that should be unit tests
+
+**Symptoms:**
+
+- Playwright picks up `*.test.ts` files in `src/`
+- Unit test files run as E2E tests
+- Vitest shows no tests found
+
+**Root Cause:**
+Test file patterns overlap between Vitest and Playwright.
+
+**Solution:**
+
+Ensure `vitest.config.ts` excludes E2E directory and `playwright.config.ts` only targets `e2e/`:
+
+```typescript
+// vitest.config.ts
+export default defineConfig({
+  test: {
+    exclude: [
+      '**/node_modules/**',
+      '**/.next/**',
+      '**/e2e/**', // ← Critical: exclude Playwright tests
+    ],
+  },
+})
+
+// playwright.config.ts
+export default defineConfig({
+  testDir: './e2e', // ← Only target E2E directory
+})
 ```
 
 ---

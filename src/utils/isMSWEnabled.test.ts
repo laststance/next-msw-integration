@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from '@jest/globals'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 describe('isMSWEnabled', () => {
   let isMSWEnabled: () => boolean
@@ -6,10 +6,10 @@ describe('isMSWEnabled', () => {
 
   beforeEach(async () => {
     // Reset modules to clear cache
-    jest.resetModules()
+    vi.resetModules()
 
     // Mock the env module to return process.env values dynamically
-    jest.doMock('@/env', () => ({
+    vi.doMock('@/env', () => ({
       env: {
         get NEXT_PUBLIC_ENABLE_MSW_MOCK() {
           return process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK
@@ -28,13 +28,13 @@ describe('isMSWEnabled', () => {
   afterEach(() => {
     // Restore original environment
     process.env = { ...originalEnv }
-    jest.unmock('@/env')
+    vi.unmock('@/env')
   })
 
   it('returns true when both NEXT_PUBLIC_ENABLE_MSW_MOCK and APP_ENV are set correctly', () => {
     process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK = 'true'
     process.env.APP_ENV = 'test'
-    Object.defineProperty(process.env, 'NODE_ENV', { value: 'test' })
+    ;(process.env as any).NODE_ENV = 'test'
 
     expect(isMSWEnabled()).toBe(true)
   })
@@ -42,7 +42,7 @@ describe('isMSWEnabled', () => {
   it("returns false when NEXT_PUBLIC_ENABLE_MSW_MOCK is not 'true'", () => {
     process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK = 'false'
     process.env.APP_ENV = 'test'
-    Object.defineProperty(process.env, 'NODE_ENV', { value: 'test' })
+    ;(process.env as any).NODE_ENV = 'test'
 
     expect(isMSWEnabled()).toBe(false)
   })
@@ -50,7 +50,7 @@ describe('isMSWEnabled', () => {
   it("returns false when APP_ENV is not 'test'", () => {
     process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK = 'true'
     process.env.APP_ENV = 'development'
-    Object.defineProperty(process.env, 'NODE_ENV', { value: 'development' })
+    ;(process.env as any).NODE_ENV = 'development'
 
     expect(isMSWEnabled()).toBe(false)
   })
@@ -58,7 +58,7 @@ describe('isMSWEnabled', () => {
   it('returns false when NEXT_PUBLIC_ENABLE_MSW_MOCK is undefined', () => {
     delete process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK
     process.env.APP_ENV = 'test'
-    Object.defineProperty(process.env, 'NODE_ENV', { value: 'test' })
+    ;(process.env as any).NODE_ENV = 'test'
 
     expect(isMSWEnabled()).toBe(false)
   })
@@ -66,7 +66,7 @@ describe('isMSWEnabled', () => {
   it('returns false when APP_ENV is undefined', () => {
     process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK = 'true'
     delete process.env.APP_ENV
-    Object.defineProperty(process.env, 'NODE_ENV', { value: 'development' })
+    ;(process.env as any).NODE_ENV = 'development'
 
     expect(isMSWEnabled()).toBe(false)
   })
@@ -74,7 +74,7 @@ describe('isMSWEnabled', () => {
   it('returns false when both environment variables are undefined', () => {
     delete process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK
     delete process.env.APP_ENV
-    Object.defineProperty(process.env, 'NODE_ENV', { value: 'development' })
+    ;(process.env as any).NODE_ENV = 'development'
 
     expect(isMSWEnabled()).toBe(false)
   })
