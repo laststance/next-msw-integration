@@ -17,7 +17,6 @@ This project implements the pattern from [mswjs/examples PR #101](https://github
 - ✅ **Environment-based Control** — MSW disabled in dev, auto-enabled in tests
 - ✅ **E2E Testing Support** — Playwright + MSW for reliable tests
 - ✅ **Type-safe Configuration** — TypeScript + Zod for strict environment validation
-- ✅ **Hot Reload Support** — Update handlers during development
 - ✅ **Production Build Ready** — SSR and API Routes work with MSW enabled
 
 ---
