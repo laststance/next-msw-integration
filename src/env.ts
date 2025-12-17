@@ -10,6 +10,24 @@ export const env = createEnv({
     NODE_ENV: z
       .enum(['development', 'test', 'production'])
       .default('development'),
+    /**
+     * APP_ENV - Custom environment variable for runtime environment identification
+     *
+     * Why APP_ENV is necessary (not just NODE_ENV):
+     * Next.js automatically sets NODE_ENV to "production" after running `next build`,
+     * regardless of the actual deployment target. This means NODE_ENV cannot reliably
+     * distinguish between different production-like environments such as:
+     * - E2E testing (production build with mocks enabled)
+     * - Preview/staging deployments
+     * - Actual production
+     *
+     * APP_ENV provides explicit control over the runtime environment:
+     * - "development": Local development
+     * - "test": E2E testing, CI/CD pipelines, preview deployments with mocks
+     *
+     * This separation allows enabling MSW in production builds for testing purposes
+     * while keeping it disabled in actual production deployments.
+     */
     APP_ENV: z.enum(['development', 'test']).optional(),
   },
 

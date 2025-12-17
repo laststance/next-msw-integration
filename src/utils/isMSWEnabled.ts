@@ -10,6 +10,21 @@ import { env } from '@/env'
  * This ensures MSW is only active in test environments and requires explicit opt-in,
  * preventing accidental activation in development or production.
  *
+ * ## Why APP_ENV instead of NODE_ENV?
+ *
+ * Next.js automatically sets NODE_ENV to "production" after `next build`, regardless
+ * of the actual deployment target. This behavior is hardcoded in Next.js and cannot
+ * be overridden. As a result, NODE_ENV cannot distinguish between:
+ *
+ * - E2E testing environment (production build with mocks)
+ * - Preview/staging deployments
+ * - Actual production deployment
+ *
+ * APP_ENV solves this by providing a custom environment identifier that persists
+ * through the build process, allowing us to:
+ * - Enable MSW in production builds for E2E testing (APP_ENV=test)
+ * - Keep MSW disabled in real production (APP_ENV=undefined or development)
+ *
  * @returns {boolean} True if MSW should be enabled, false otherwise
  *
  * @example

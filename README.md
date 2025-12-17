@@ -246,6 +246,28 @@ Handlers are automatically used by both browser and server workers.
 | `NEXT_PUBLIC_ENABLE_MSW_MOCK` | `true` \| `false`       | Enable MSW (client-side) |
 | `APP_ENV`                     | `development` \| `test` | Application environment  |
 
+#### Why APP_ENV? (NODE_ENV Limitation)
+
+Next.js automatically sets `NODE_ENV` to `"production"` after running `next build`, regardless of the actual deployment target. This is hardcoded behavior in Next.js and cannot be overridden.
+
+This means `NODE_ENV` alone cannot distinguish between:
+
+- **E2E testing** — Production build with MSW mocks enabled
+- **Preview/staging** — Production build for pre-release validation
+- **Actual production** — Real production deployment
+
+`APP_ENV` solves this limitation by providing a custom environment identifier that persists through the build process:
+
+```bash
+# E2E testing: NODE_ENV=production (auto), APP_ENV=test (explicit)
+NEXT_PUBLIC_ENABLE_MSW_MOCK=true APP_ENV=test pnpm build
+
+# Real production: NODE_ENV=production (auto), APP_ENV=undefined
+pnpm build
+```
+
+This separation allows MSW to be enabled in production builds for testing while remaining disabled in actual production deployments.
+
 **File Structure:**
 
 - `.env.development` — MSW disabled (default for local development)
@@ -799,6 +821,512 @@ export default defineConfig({
 - **Use Playwright `--ui` mode** (`pnpm test:e2e:ui`) for interactive test development
 - **Read JSDoc comments** in the codebase for implementation rationale and best practices
 - **Run `pnpm build:e2e` before E2E tests** to ensure production build includes MSW
+
+---
+
+## 🤖 AI Reproduction Prompt
+
+> **For AI Assistants**: This section contains a complete, self-contained prompt to reproduce this MSW + Next.js App Router integration. Copy the prompt inside the expandable section and paste it to any AI assistant (Claude, ChatGPT, etc.) to recreate this setup from scratch.
+
+<details>
+<summary><strong>📋 Click to expand: Complete MSW Setup Reproduction Prompt</strong></summary>
+
+---
+
+### 🎯 Prompt: Next.js App Router × MSW 2.x Complete Integration
+
+Copy and paste the following prompt to an AI assistant to reproduce the MSW setup.
+
+---
+
+````markdown
+# Task: Integrate MSW 2.x with Next.js App Router
+
+Integrate Mock Service Worker (MSW) 2.x into a Next.js (App Router, v14+) project.
+Enable request interception in both browser (client-side) and server (RSC, API Routes).
+
+## Requirements
+
+1. **Client-side**: Request interception via Service Worker
+2. **Server-side**: Request interception in RSC and API Routes
+3. **Environment-based control**: Disabled in development, enabled only in test
+4. **Production safety**: Implement safeguards to prevent accidental production activation
+
+## Dependencies
+
+```bash
+pnpm add msw@^2.12
+pnpm add @t3-oss/env-nextjs zod
+```
+
+## File Structure
+
+Files to create:
+
+1. `src/env.ts` - Environment variable schema (type-safe)
+2. `src/utils/isMSWEnabled.ts` - MSW activation logic
+3. `src/app/msw-provider.tsx` - Client-side provider
+4. `src/app/layout.tsx` integration - Server-side setup
+5. `mocks/handlers.ts` - Handler definitions (shared)
+6. `mocks/browser.ts` - Browser worker setup
+7. `mocks/server.ts` - Server worker setup
+
+---
+
+## Implementation Details
+
+### 1. Environment Variable Schema (`src/env.ts`)
+
+```typescript
+import { createEnv } from '@t3-oss/env-nextjs'
+import { z } from 'zod'
+
+export const env = createEnv({
+  server: {
+    NODE_ENV: z
+      .enum(['development', 'test', 'production'])
+      .default('development'),
+    APP_ENV: z.enum(['development', 'test']).optional(),
+  },
+  client: {
+    NEXT_PUBLIC_ENABLE_MSW_MOCK: z
+      .enum(['true', 'false'])
+      .optional()
+      .default('false'),
+  },
+  runtimeEnv: {
+    NODE_ENV: process.env.NODE_ENV,
+    APP_ENV: process.env.APP_ENV,
+    NEXT_PUBLIC_ENABLE_MSW_MOCK: process.env.NEXT_PUBLIC_ENABLE_MSW_MOCK,
+  },
+  skipValidation: !!process.env.SKIP_ENV_VALIDATION,
+  emptyStringAsUndefined: true,
+})
+```
+
+**Rationale**: Type-safe environment variable validation with Zod. Client variables require the `NEXT_PUBLIC_` prefix.
+
+---
+
+### 2. MSW Activation Logic (`src/utils/isMSWEnabled.ts`)
+
+```typescript
+import { env } from '@/env'
+
+/**
+ * Determines whether MSW should be enabled
+ *
+ * Important: Uses different logic for client and server
+ * - Client: Only checks NEXT_PUBLIC_ENABLE_MSW_MOCK
+ * - Server: NEXT_PUBLIC_ENABLE_MSW_MOCK AND (APP_ENV=test OR NODE_ENV=test)
+ *
+ * This asymmetric logic prevents accidental production activation
+ */
+export function isMSWEnabled(): boolean {
+  // Client-side: Only check public environment variable
+  // Server-only variables (APP_ENV) are not accessible from client
+  if (typeof window !== 'undefined') {
+    return env.NEXT_PUBLIC_ENABLE_MSW_MOCK === 'true'
+  }
+
+  // Server-side: Double-check for safety
+  // Even if NEXT_PUBLIC_ENABLE_MSW_MOCK=true, won't activate unless in test mode
+  return (
+    env.NEXT_PUBLIC_ENABLE_MSW_MOCK === 'true' &&
+    (env.APP_ENV === 'test' || process.env.NODE_ENV === 'test')
+  )
+}
+```
+
+**Rationale**:
+
+- Server-side double-check prevents activation in production even if env vars are misconfigured
+- Client-side can't access server-only variables, so uses simple check only
+
+---
+
+### 3. MSW Provider (`src/app/msw-provider.tsx`)
+
+```typescript
+'use client'
+
+import { useLayoutEffect, useState } from 'react'
+import { isMSWEnabled } from '@/utils/isMSWEnabled'
+
+/**
+ * MSWProvider - Wrapper component managing MSW initialization
+ *
+ * Key implementation points:
+ * - 'use client' declares this as a client-only component
+ * - useLayoutEffect initializes MSW before first paint
+ * - Dynamic import prevents server bundle contamination
+ * - State-based blocking prevents race conditions
+ */
+export function MSWProvider({
+  children,
+}: Readonly<{
+  children: React.ReactNode
+}>): React.ReactNode {
+  const [isMSWReady, setIsMSWReady] = useState(false)
+
+  useLayoutEffect(() => {
+    const enabled = isMSWEnabled()
+
+    // Skip if MSW disabled or in SSR context
+    if (!enabled || typeof window === 'undefined') {
+      setIsMSWReady(true)
+      return
+    }
+
+    // Dynamic import: Separates browser-only code from server bundle
+    import('../../mocks/browser')
+      .then(async ({ worker }) => {
+        try {
+          await worker.start({
+            onUnhandledRequest: 'bypass', // Non-mocked requests pass through
+          })
+          setIsMSWReady(true)
+        } catch {
+          // App continues even if MSW fails to start
+          setIsMSWReady(true)
+        }
+      })
+      .catch(() => {
+        setIsMSWReady(true)
+      })
+  }, [])
+
+  // Show loading while MSW initializes
+  // This prevents components from fetching before MSW is ready
+  if (isMSWEnabled() && !isMSWReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-lg">Initializing MSW...</p>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+```
+
+**Rationale**:
+
+- `useLayoutEffect`: Executes before `useEffect`, initializing MSW before first paint
+- Dynamic import: `mocks/browser.ts` uses browser-only APIs. Static import would cause SSR errors
+- State-based blocking: Prevents child components from rendering until MSW initialization completes
+
+---
+
+### 4. Server-side Integration (`src/app/layout.tsx`)
+
+```typescript
+import type { Metadata } from 'next'
+import { isMSWEnabled } from '@/utils/isMSWEnabled'
+import { MSWProvider } from './msw-provider'
+
+// Server-side MSW setup
+// Important: Use require() (not import)
+if (process.env.NEXT_RUNTIME === 'nodejs' && isMSWEnabled()) {
+  const { server } = require('../../mocks/server')
+  server.listen({ onUnhandledRequest: 'bypass' })
+}
+
+export const metadata: Metadata = {
+  title: 'My App',
+  description: 'App with MSW integration',
+}
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode
+}>) {
+  return (
+    <html lang="en">
+      <body>
+        <MSWProvider>{children}</MSWProvider>
+      </body>
+    </html>
+  )
+}
+```
+
+**Rationale**:
+
+- `process.env.NEXT_RUNTIME === 'nodejs'`: Only executes in Node.js environment, not Edge Runtime
+- `require()` vs `import`: require() is needed for synchronous top-level execution
+- `onUnhandledRequest: 'bypass'`: Non-mocked requests pass through to actual APIs
+
+---
+
+### 5. Handler Definitions (`mocks/handlers.ts`)
+
+```typescript
+import { http, HttpResponse } from 'msw'
+
+/**
+ * MSW request handlers
+ * Shared between browser and server workers
+ */
+export const handlers = [
+  // GET request example
+  http.get('/api/user', () => {
+    return HttpResponse.json({
+      id: '1',
+      name: 'John Doe',
+      email: 'john.doe@example.com',
+    })
+  }),
+
+  // POST request example (with body parsing)
+  http.post('/api/login', async ({ request }) => {
+    const body = await request.json()
+    return HttpResponse.json({
+      success: true,
+      token: 'mock-jwt-token',
+      user: body,
+    })
+  }),
+
+  // Route with parameters example
+  http.get('/api/products/:id', ({ params }) => {
+    return HttpResponse.json({
+      id: params.id,
+      name: `Product ${params.id}`,
+      price: 99.99,
+    })
+  }),
+]
+```
+
+---
+
+### 6. Browser Worker (`mocks/browser.ts`)
+
+```typescript
+import { setupWorker } from 'msw/browser'
+import { handlers } from './handlers'
+
+/**
+ * Browser MSW worker
+ * Uses Service Worker to intercept requests
+ */
+export const worker = setupWorker(...handlers)
+```
+
+---
+
+### 7. Server Worker (`mocks/server.ts`)
+
+```typescript
+import { setupServer } from 'msw/node'
+import { handlers } from './handlers'
+
+/**
+ * Server MSW worker
+ * Intercepts requests in Node.js environment (for RSC, API Routes)
+ */
+export const server = setupServer(...handlers)
+```
+
+---
+
+### 8. Generate Service Worker File
+
+```bash
+npx msw init public/ --save
+```
+
+This generates `public/mockServiceWorker.js`. This file is auto-generated and should not be edited manually.
+
+---
+
+### 9. Environment Variable Files
+
+`.env.development` (Development: MSW disabled):
+
+```
+NODE_ENV=development
+NEXT_PUBLIC_ENABLE_MSW_MOCK=false
+APP_ENV=development
+```
+
+`.env.test` (Testing: MSW enabled):
+
+```
+NODE_ENV=test
+NEXT_PUBLIC_ENABLE_MSW_MOCK=true
+APP_ENV=test
+```
+
+---
+
+### 10. Why APP_ENV? (Critical: NODE_ENV Limitation)
+
+**Problem**: Next.js automatically sets `NODE_ENV` to `"production"` after `next build`, regardless of the actual deployment target. This is hardcoded in Next.js and cannot be overridden.
+
+**Impact**: `NODE_ENV` cannot distinguish between:
+
+- E2E testing (production build with mocks)
+- Preview/staging deployments
+- Actual production deployment
+
+**Solution**: `APP_ENV` provides a custom environment identifier that persists through the build:
+
+```bash
+# E2E testing: NODE_ENV=production (auto), APP_ENV=test (explicit)
+NEXT_PUBLIC_ENABLE_MSW_MOCK=true APP_ENV=test pnpm build
+
+# Real production: NODE_ENV=production (auto), APP_ENV=undefined
+pnpm build
+```
+
+This allows MSW to be enabled in production builds for testing while staying disabled in actual production.
+
+---
+
+## Important Notes
+
+### React StrictMode Handling
+
+React StrictMode (enabled by default in Next.js) double-renders components in development.
+Use the `isMounted` pattern for components with async data fetching:
+
+```typescript
+useEffect(() => {
+  let isMounted = true
+
+  const fetchData = async () => {
+    const res = await fetch('/api/user')
+    const data = await res.json()
+    if (isMounted) {
+      // Check mount status before state update
+      setUser(data)
+    }
+  }
+
+  fetchData()
+
+  return () => {
+    isMounted = false // Cleanup
+  }
+}, [])
+```
+
+### Preventing Hydration Mismatch
+
+Hydration errors occur if `isMSWEnabled()` returns different values on client and server.
+In this implementation, the server has an additional safety check (APP_ENV=test),
+so correctly setting environment variables is important.
+
+### E2E Test Build
+
+When running E2E tests, a build with MSW included is required:
+
+```bash
+# Build with MSW enabled
+NEXT_PUBLIC_ENABLE_MSW_MOCK=true APP_ENV=test pnpm build
+
+# Run tests
+pnpm start &
+playwright test
+```
+
+---
+
+## package.json Script Examples
+
+```json
+{
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "build:e2e": "NEXT_PUBLIC_ENABLE_MSW_MOCK=true APP_ENV=test next build",
+    "start": "next start",
+    "test:e2e": "pnpm build:e2e && playwright test"
+  }
+}
+```
+
+---
+
+## Version Compatibility
+
+| Package    | Minimum Version | Recommended Version |
+| ---------- | --------------- | ------------------- |
+| Next.js    | 14.0.0          | 15.0+ / 16.0+       |
+| MSW        | 2.0.0           | 2.12+               |
+| React      | 18.0.0          | 19.0+               |
+| TypeScript | 5.0.0           | 5.5+                |
+
+**Note**: In Next.js 15+, `params` and `searchParams` return `Promise`, so `await` is required.
+
+---
+
+## Verification Steps
+
+1. Start dev server with MSW enabled:
+
+   ```bash
+   NEXT_PUBLIC_ENABLE_MSW_MOCK=true pnpm dev
+   ```
+
+2. Check browser console:
+
+   ```
+   [MSW] Mocking enabled
+   ```
+
+3. Verify `/api/user` returns 200 OK in Network tab
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Next.js App Router                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  ┌─────────────────────┐     ┌─────────────────────┐            │
+│  │   Server Component   │     │   Client Component   │            │
+│  │   (RSC/API Routes)   │     │   (Browser)          │            │
+│  └──────────┬──────────┘     └──────────┬──────────┘            │
+│             │                            │                        │
+│             ▼                            ▼                        │
+│  ┌─────────────────────┐     ┌─────────────────────┐            │
+│  │   mocks/server.ts   │     │   mocks/browser.ts  │            │
+│  │   (setupServer)     │     │   (setupWorker)     │            │
+│  └──────────┬──────────┘     └──────────┬──────────┘            │
+│             │                            │                        │
+│             └────────────┬───────────────┘                        │
+│                          ▼                                        │
+│             ┌─────────────────────┐                              │
+│             │   mocks/handlers.ts │  ← Shared handlers           │
+│             └─────────────────────┘                              │
+│                                                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Activation: isMSWEnabled() → env.ts → Environment Variables     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Troubleshooting Quick Reference
+
+| Symptom                         | Cause                                          | Solution                               |
+| ------------------------------- | ---------------------------------------------- | -------------------------------------- |
+| "Loading..." displays forever   | StrictMode double-rendering                    | Implement `isMounted` pattern          |
+| Hydration mismatch              | `isMSWEnabled()` differs between client/server | Set environment variables correctly    |
+| MSW not intercepting requests   | Service Worker not registered                  | Run `npx msw init public/`             |
+| No [MSW] log in browser console | MSW is disabled                                | Set `NEXT_PUBLIC_ENABLE_MSW_MOCK=true` |
+| Mocks don't work in E2E tests   | Regular build doesn't include MSW              | Build with `pnpm build:e2e`            |
+````
+
+---
+
+</details>
 
 ---
 
