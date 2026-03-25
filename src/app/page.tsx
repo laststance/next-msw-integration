@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
 /**
@@ -107,6 +108,10 @@ export default function Page() {
           <p className="text-gray-500">No user data available</p>
         )}
       </div>
+
+      <Link href="/counter" className="text-blue-500 hover:underline">
+        Try the Counter Demo (Server Actions + MSW) &rarr;
+      </Link>
     </div>
   )
 }
