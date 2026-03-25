@@ -109,9 +109,14 @@ export default function Page() {
         )}
       </div>
 
-      <Link href="/counter" className="text-blue-500 hover:underline">
-        Try the Counter Demo (Server Actions + MSW) &rarr;
-      </Link>
+      <div className="flex flex-col gap-2 items-center">
+        <Link href="/counter" className="text-blue-500 hover:underline">
+          Try the Counter Demo (Server Actions + MSW) &rarr;
+        </Link>
+        <Link href="/pokemon" className="text-blue-500 hover:underline">
+          Try the Pokemon Demo (Server Component + MSW) &rarr;
+        </Link>
+      </div>
     </div>
   )
 }
