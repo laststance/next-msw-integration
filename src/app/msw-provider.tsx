@@ -29,34 +29,31 @@ export function MSWProvider({
 }: Readonly<{
   children: React.ReactNode
 }>): React.ReactNode {
-  // Track MSW initialization state
-  // This prevents children from rendering before MSW intercepts are ready
-  const [isMSWReady, setIsMSWReady] = useState(false)
+  // Start as "ready" to match server-rendered HTML and avoid hydration mismatch.
+  // Server always renders children (isMSWEnabled() returns false in non-test envs).
+  // useLayoutEffect will set this to false before paint if MSW needs to initialize.
+  const [isMSWReady, setIsMSWReady] = useState(true)
 
   useLayoutEffect(() => {
-    const enabled = isMSWEnabled()
-
-    // Skip MSW initialization if disabled or in SSR context
-    // This prevents errors during server-side rendering
-    if (!enabled || typeof window === 'undefined') {
-      setIsMSWReady(true)
+    if (!isMSWEnabled() || typeof window === 'undefined') {
       return
     }
 
+    // Block rendering while MSW initializes — this fires before browser paint,
+    // so the user never sees children flash before MSW is ready.
+    setIsMSWReady(false)
+
     // Dynamically import MSW browser worker to avoid SSR bundle issues
-    // MSW uses browser-only APIs that would fail during SSR
     import('../../mocks/browser')
       .then(async ({ worker }) => {
         try {
           await worker.start({
             onUnhandledRequest: 'bypass', // Allow non-mocked requests to pass through
           })
-          setIsMSWReady(true)
         } catch {
           // If MSW fails to start, allow app to continue
-          // This prevents the entire app from breaking due to MSW issues
-          setIsMSWReady(true)
         }
+        setIsMSWReady(true)
       })
       .catch(() => {
         // Import failures shouldn't block the app
@@ -64,11 +61,8 @@ export function MSWProvider({
       })
   }, [])
 
-  // Show loading UI while MSW is initializing
-  // This is the key fix for the persistent "Loading..." issue:
-  // Without this check, child components may start fetching before MSW is ready,
-  // causing requests to bypass MSW and potentially fail or return unexpected data
-  if (isMSWEnabled() && !isMSWReady) {
+  // Show loading UI while MSW is initializing (only after useLayoutEffect fires)
+  if (!isMSWReady) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-lg">Initializing MSW...</p>
@@ -76,6 +70,6 @@ export function MSWProvider({
     )
   }
 
-  // Once MSW is ready (or disabled), render children normally
+  // Once MSW is ready (or disabled/server-side), render children normally
   return <>{children}</>
 }
